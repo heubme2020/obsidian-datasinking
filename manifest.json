@@ -1,0 +1,10 @@
+{
+  "id": "datasinking",
+  "name": "DataSinking",
+  "version": "0.1.0",
+  "minAppVersion": "1.0.0",
+  "description": "Pull full-text financial reports (annual, quarterly, 10-K) into your vault as clean Markdown notes.",
+  "author": "DataSinking",
+  "authorUrl": "https://datasink.ing",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,21 @@
+{
+  "name": "datasinking-obsidian",
+  "version": "0.1.0",
+  "description": "Obsidian plugin for DataSinking — full-text financial reports as Markdown.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": ["obsidian", "finance", "financial-reports", "markdown"],
+  "author": "DataSinking",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.21.0",
+    "obsidian": "latest",
+    "tslib": "^2.6.0",
+    "typescript": "^5.4.0"
+  }
+}
