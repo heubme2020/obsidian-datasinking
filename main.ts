@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS: DataSinkingSettings = {
 };
 
 const BASE = "https://api.datasink.ing";
+const HOMEPAGE_URL = "https://datasink.ing";
 const FREE_KEY_URL = "https://datasink.ing/pricing";
 
 interface ReportDoc {
@@ -38,6 +39,15 @@ interface ReportDoc {
   content?: string;
 }
 
+/** 解析「倒数第 N 份」：空/非法 → 1（最新）；"-3" → 3（倒数第三）。 */
+function parseIndex(raw: string): number {
+  const s = (raw || "").trim();
+  const m = /^-(\d+)$/.exec(s);
+  if (!m) return 1;
+  const k = parseInt(m[1], 10);
+  return k >= 1 ? k : 1;
+}
+
 export default class DataSinkingPlugin extends Plugin {
   settings: DataSinkingSettings;
 
@@ -45,8 +55,8 @@ export default class DataSinkingPlugin extends Plugin {
     await this.loadSettings();
 
     this.addCommand({
-      id: "fetch-latest-report",
-      name: "Fetch latest report by symbol",
+      id: "fetch-report",
+      name: "Fetch a report by symbol",
       callback: () => new SymbolModal(this.app, this).open(),
     });
 
@@ -69,10 +79,12 @@ export default class DataSinkingPlugin extends Plugin {
 
   async api(path: string, withKey: boolean): Promise<unknown> {
     let url = `${BASE}${path}`;
+    const qs: string[] = [];
     if (withKey && this.settings.apiKey) {
-      const sep = path.includes("?") ? "&" : "?";
-      url += `${sep}apikey=${encodeURIComponent(this.settings.apiKey)}`;
+      qs.push(`apikey=${encodeURIComponent(this.settings.apiKey)}`);
     }
+    qs.push("ref=obsidian"); // 追踪来源：Obsidian 插件
+    url += `${path.includes("?") ? "&" : "?"}${qs.join("&")}`;
     const resp = await fetch(url);
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -81,33 +93,33 @@ export default class DataSinkingPlugin extends Plugin {
     return data;
   }
 
-  /** 拉某 symbol 最新一篇全文 → 存成笔记。返回文件名或 null。 */
-  async saveLatestReport(symbol: string): Promise<string | null> {
+  /** 拉某 symbol 的「倒数第 k 份」全文 → 存成笔记。返回文件名或 null。 */
+  async saveReport(symbol: string, k: number): Promise<string | null> {
     const sym = symbol.trim();
     if (!sym) return null;
 
     let doc: ReportDoc | undefined;
     if (this.settings.apiKey) {
-      // 有 key：正式端点，一步拿全文
+      // 有 key：正式端点，一步拿全文（size=k，取第 k-1 项 = 倒数第 k 份）
       const data = (await this.api(
-        `/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=1&with_content=1`,
+        `/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=${k}&with_content=1`,
         true
       )) as { items?: ReportDoc[] };
-      doc = data.items?.[0];
+      doc = data.items?.[k - 1];
     } else {
       // 无 key：公共端点两步（列表 → 按 id 取全文），走 31 篇/7 天/IP 公共额度
       const list = (await this.api(
-        `/public/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=1`,
+        `/public/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=${k}`,
         false
       )) as { items?: ReportDoc[] };
-      const meta = list.items?.[0];
+      const meta = list.items?.[k - 1];
       if (meta) {
         doc = (await this.api(`/public/documents/${meta.id}`, false)) as ReportDoc;
       }
     }
 
     if (!doc) {
-      new Notice(`DataSinking: no reports for ${sym}`);
+      new Notice(`DataSinking: no report #${k} for ${sym}`, 8000);
       return null;
     }
 
@@ -137,7 +149,7 @@ export default class DataSinkingPlugin extends Plugin {
   }
 }
 
-// ---- 输入单个 symbol 的弹窗 ----
+// ---- 输入单个 symbol + 指定第几份的弹窗 ----
 class SymbolModal extends Modal {
   constructor(app: App, private plugin: DataSinkingPlugin) {
     super(app);
@@ -146,26 +158,34 @@ class SymbolModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.createEl("h2", { text: "Fetch financial report" });
-    contentEl.createEl("p", { text: "Symbol (FMP-style, e.g. 600519.SS / 7203.T / 005930.KS / 2330.TW):" });
 
+    contentEl.createEl("p", { text: "Symbol (FMP-style, e.g. 600519.SS / 7203.T / 005930.KS / 2330.TW):" });
     const input = contentEl.createEl("input", { type: "text" });
-    input.placeholder = "600519.SS";
+    input.placeholder = "7203.T";
     input.style.width = "100%";
     input.focus();
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") this.submit(input.value);
-    });
+
+    contentEl.createEl("p", { text: "Which report (blank or -1 = latest · -2 = 2nd latest · -3 = 3rd latest):" });
+    const idx = contentEl.createEl("input", { type: "text" });
+    idx.placeholder = "-1 = latest";
+    idx.style.width = "100%";
+    idx.style.marginBottom = "12px";
+
+    const submit = () => this.submit(input.value, idx.value);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    idx.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
 
     new Setting(contentEl)
-      .addButton((btn) =>
-        btn.setButtonText("Fetch").setCta().onClick(() => this.submit(input.value))
-      );
+      .addButton((btn) => btn.setButtonText("Fetch").setCta().onClick(() => submit()));
+
+    const foot = contentEl.createEl("p", { cls: "datasinking-link" });
+    foot.createEl("a", { text: "Visit datasink.ing →", href: HOMEPAGE_URL });
   }
 
-  async submit(symbol: string) {
+  async submit(symbol: string, rawIdx: string) {
     this.close();
     try {
-      await this.plugin.saveLatestReport(symbol);
+      await this.plugin.saveReport(symbol, parseIndex(rawIdx));
     } catch (e) {
       this.plugin.notifyError(e);
     }
@@ -185,17 +205,24 @@ class BatchModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.createEl("h2", { text: "Batch download reports" });
-    contentEl.createEl("p", { text: "Comma-separated symbols, one report each:" });
+    contentEl.createEl("p", { text: "Comma-separated symbols, one report each (latest):" });
 
     const input = contentEl.createEl("textarea");
     input.placeholder = "600519.SS, 7203.T, 005930.KS, 2330.TW";
     input.style.width = "100%";
     input.style.height = "80px";
+    input.style.marginBottom = "12px";
+
+    const submit = () => this.submit(input.value);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
 
     new Setting(contentEl)
-      .addButton((btn) =>
-        btn.setButtonText("Download").setCta().onClick(() => this.submit(input.value))
-      );
+      .addButton((btn) => btn.setButtonText("Download").setCta().onClick(() => submit()));
+
+    const foot = contentEl.createEl("p", { cls: "datasinking-link" });
+    foot.createEl("a", { text: "Visit datasink.ing →", href: HOMEPAGE_URL });
   }
 
   async submit(raw: string) {
@@ -206,7 +233,7 @@ class BatchModal extends Modal {
     let ok = 0;
     for (const s of symbols) {
       try {
-        const name = await this.plugin.saveLatestReport(s);
+        const name = await this.plugin.saveReport(s, 1); // 批量拉各自最新
         if (name) ok++;
       } catch (e) {
         this.plugin.notifyError(e);
@@ -261,6 +288,8 @@ class DataSinkingSettingTab extends PluginSettingTab {
 
     containerEl.createEl("hr");
     const info = containerEl.createEl("p");
+    info.createEl("a", { text: "Visit datasink.ing →", href: HOMEPAGE_URL });
+    info.createEl("br");
     info.createEl("a", { text: "Get a free API key →", href: FREE_KEY_URL });
   }
 }

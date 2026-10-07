@@ -6,13 +6,13 @@
 ## 前置条件
 
 - 一个 GitHub 账号 + 一个 Obsidian 账号（分开的）
-- 一个**公开** GitHub 仓库，**根目录**放：`README.md`、`LICENSE`、`manifest.json`（以及构建后的 `main.js`、`styles.css`）
+- 一个**公开** GitHub 仓库，**根目录**放：`README.md`、`LICENSE`、`manifest.json`、**`versions.json`**（以及构建后的 `main.js`、`styles.css`）
 
 ## 步骤
 
 1. **建独立仓库**（不要塞进 datasinking 子目录——门户读的是仓库根目录）：
    - 新建公开 repo，比如 `heubme2020/obsidian-datasinking`
-   - 把本目录的 `README.md`、`LICENSE`、`manifest.json`、`styles.css`、`main.js` 推到根目录
+   - 把本目录的 `README.md`、`LICENSE`、`manifest.json`、`versions.json`、`styles.css`、`main.js` 推到根目录
 
 2. **打 GitHub Release**：
    - tag 必须**精确等于** `manifest.json` 的 `version`（不要 `v` 前缀）→ 现在是 `0.1.0`
@@ -31,6 +31,7 @@
 
 ## 注意
 
+- **`versions.json` 必须有，且要含当前版本**：`{"<版本>": "<该版本最低 Obsidian 版本>", ...}`。漏了它自动审核直接挂（2026-10-07 首版 0.1.0 就是这么失败的）。
 - `manifest.json` 的 `id` 全局唯一、**不能含 `obsidian`**（我们是 `datasinking` ✓）
 - 门户读的是**默认分支 HEAD 的 manifest.json**，跟 release 附件要保持一致
 - 提交前先本地测一遍（见 README）

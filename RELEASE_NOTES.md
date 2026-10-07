@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.1.1 (2026-10-07) — Fix review + report picker
+
+- **Fix**: add `versions.json` (required by the community directory review — this is why 0.1.0 was rejected).
+- **Pick any report** — the fetch command now takes an index: `-1` = latest, `-2` = 2nd latest, `-3` = 3rd latest (blank = latest).
+- **Website links** — added "Visit datasink.ing" links in the modals and settings.
+
 ## 0.1.0 (2026-10-07) — Initial release
 
 **DataSinking for Obsidian** — pull full-text financial reports into your vault as clean Markdown notes.
