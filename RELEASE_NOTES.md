@@ -1,5 +1,14 @@
 # Release Notes
 
+## 0.1.2 (2026-10-07) — Pass community review
+
+- **Fix review Error**: use CSS classes (`styles.css`) instead of inline `.style` assignments.
+- Use Obsidian's `requestUrl` instead of raw `fetch`.
+- Typed API responses (no `any` / `as any` casts).
+- Handle async handlers with `void` (no floating promises).
+- Replace deprecated `builtin-modules` with an inline Node builtins list.
+- Commit `package-lock.json` for reproducible builds.
+
 ## 0.1.1 (2026-10-07) — Fix review + report picker
 
 - **Fix**: add `versions.json` (required by the community directory review — this is why 0.1.0 was rejected).

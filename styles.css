@@ -1,1 +1,5 @@
-/* DataSinking Obsidian plugin — no custom styles needed yet. */
+/* DataSinking Obsidian plugin styles */
+.datasinking-input { width: 100%; }
+.datasinking-index-input { width: 100%; margin-bottom: 12px; }
+.datasinking-textarea { width: 100%; height: 80px; margin-bottom: 12px; }
+.datasinking-modal-link { margin-top: 8px; }

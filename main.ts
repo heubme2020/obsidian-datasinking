@@ -6,6 +6,7 @@ import {
   PluginSettingTab,
   Setting,
   normalizePath,
+  requestUrl,
 } from "obsidian";
 
 // ---------------------------------------------------------------------------
@@ -77,18 +78,18 @@ export default class DataSinkingPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  async api(path: string, withKey: boolean): Promise<unknown> {
+  async api<T>(path: string, withKey: boolean): Promise<T> {
     let url = `${BASE}${path}`;
-    const qs: string[] = [];
     if (withKey && this.settings.apiKey) {
-      qs.push(`apikey=${encodeURIComponent(this.settings.apiKey)}`);
+      const sep = path.includes("?") ? "&" : "?";
+      url += `${sep}apikey=${encodeURIComponent(this.settings.apiKey)}`;
     }
-    qs.push("ref=obsidian"); // 追踪来源：Obsidian 插件
-    url += `${path.includes("?") ? "&" : "?"}${qs.join("&")}`;
-    const resp = await fetch(url);
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error((data as any).detail || (data as any).message || `HTTP ${resp.status}`);
+
+    const resp = await requestUrl({ url });
+    const data = resp.json as T;
+    if (resp.status >= 400) {
+      const err = data as unknown as { detail?: string; message?: string };
+      throw new Error(err.detail ?? err.message ?? `HTTP ${resp.status}`);
     }
     return data;
   }
@@ -101,20 +102,20 @@ export default class DataSinkingPlugin extends Plugin {
     let doc: ReportDoc | undefined;
     if (this.settings.apiKey) {
       // 有 key：正式端点，一步拿全文（size=k，取第 k-1 项 = 倒数第 k 份）
-      const data = (await this.api(
+      const data = await this.api<{ items?: ReportDoc[] }>(
         `/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=${k}&with_content=1`,
         true
-      )) as { items?: ReportDoc[] };
+      );
       doc = data.items?.[k - 1];
     } else {
       // 无 key：公共端点两步（列表 → 按 id 取全文），走 31 篇/7 天/IP 公共额度
-      const list = (await this.api(
+      const list = await this.api<{ items?: ReportDoc[] }>(
         `/public/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=${k}`,
         false
-      )) as { items?: ReportDoc[] };
+      );
       const meta = list.items?.[k - 1];
       if (meta) {
-        doc = (await this.api(`/public/documents/${meta.id}`, false)) as ReportDoc;
+        doc = await this.api<ReportDoc>(`/public/documents/${meta.id}`, false);
       }
     }
 
@@ -135,16 +136,17 @@ export default class DataSinkingPlugin extends Plugin {
   }
 
   notifyError(e: unknown) {
-    const msg = String((e as any)?.message || e).toLowerCase();
-    if (msg.includes("quota") || msg.includes("limit") || msg.includes("429")) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const lower = msg.toLowerCase();
+    if (lower.includes("quota") || lower.includes("limit") || lower.includes("429")) {
       new Notice(
         "DataSinking: free quota used up — get a free API key at datasink.ing and paste it in Settings → DataSinking.",
         10000
       );
-    } else if (msg.includes("missing api key")) {
+    } else if (lower.includes("missing api key")) {
       new Notice("DataSinking: missing API key — check Settings → DataSinking.", 5000);
     } else {
-      new Notice(`DataSinking error: ${String((e as any)?.message || e)}`, 8000);
+      new Notice(`DataSinking error: ${msg}`, 8000);
     }
   }
 }
@@ -161,24 +163,23 @@ class SymbolModal extends Modal {
 
     contentEl.createEl("p", { text: "Symbol (FMP-style, e.g. 600519.SS / 7203.T / 005930.KS / 2330.TW):" });
     const input = contentEl.createEl("input", { type: "text" });
+    input.addClass("datasinking-input");
     input.placeholder = "7203.T";
-    input.style.width = "100%";
     input.focus();
 
     contentEl.createEl("p", { text: "Which report (blank or -1 = latest · -2 = 2nd latest · -3 = 3rd latest):" });
     const idx = contentEl.createEl("input", { type: "text" });
+    idx.addClass("datasinking-index-input");
     idx.placeholder = "-1 = latest";
-    idx.style.width = "100%";
-    idx.style.marginBottom = "12px";
 
     const submit = () => this.submit(input.value, idx.value);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
-    idx.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") void submit(); });
+    idx.addEventListener("keydown", (e) => { if (e.key === "Enter") void submit(); });
 
     new Setting(contentEl)
-      .addButton((btn) => btn.setButtonText("Fetch").setCta().onClick(() => submit()));
+      .addButton((btn) => btn.setButtonText("Fetch").setCta().onClick(() => void submit()));
 
-    const foot = contentEl.createEl("p", { cls: "datasinking-link" });
+    const foot = contentEl.createEl("p", { cls: "datasinking-modal-link" });
     foot.createEl("a", { text: "Visit datasink.ing →", href: HOMEPAGE_URL });
   }
 
@@ -208,20 +209,18 @@ class BatchModal extends Modal {
     contentEl.createEl("p", { text: "Comma-separated symbols, one report each (latest):" });
 
     const input = contentEl.createEl("textarea");
+    input.addClass("datasinking-textarea");
     input.placeholder = "600519.SS, 7203.T, 005930.KS, 2330.TW";
-    input.style.width = "100%";
-    input.style.height = "80px";
-    input.style.marginBottom = "12px";
 
     const submit = () => this.submit(input.value);
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
     });
 
     new Setting(contentEl)
-      .addButton((btn) => btn.setButtonText("Download").setCta().onClick(() => submit()));
+      .addButton((btn) => btn.setButtonText("Download").setCta().onClick(() => void submit()));
 
-    const foot = contentEl.createEl("p", { cls: "datasinking-link" });
+    const foot = contentEl.createEl("p", { cls: "datasinking-modal-link" });
     foot.createEl("a", { text: "Visit datasink.ing →", href: HOMEPAGE_URL });
   }
 
