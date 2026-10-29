@@ -10,11 +10,10 @@ import {
 } from "obsidian";
 
 // ---------------------------------------------------------------------------
-// DataSinking — 把财报全文拉进 Obsidian 当 Markdown 笔记。
+// DataSinking — 智能搜索：先模糊搜股票（英文名/代码），点一只列出它全部财报，点一条下载进 vault。
 //
-// 免费档：不填 key，走公共额度（很少，够试几次）。
+// 免费档：不填 key，走公共额度（31 篇/7 天/IP）。
 // 超额：弹提示，去 https://datasink.ing 注册个免费 key（8191 篇/7 天），填进设置。
-// 付费：$31/年 key（524287 篇/7 天）。
 // ---------------------------------------------------------------------------
 
 interface DataSinkingSettings {
@@ -37,16 +36,38 @@ interface ReportDoc {
   report_period: string;
   doc_type: string;
   title: string;
+  word_count?: number;
   content?: string;
 }
 
-/** 解析「倒数第 N 份」：空/非法 → 1（最新）；"-3" → 3（倒数第三）。 */
-function parseIndex(raw: string): number {
-  const s = (raw || "").trim();
-  const m = /^-(\d+)$/.exec(s);
-  if (!m) return 1;
-  const k = parseInt(m[1], 10);
-  return k >= 1 ? k : 1;
+interface StockItem {
+  symbol: string;
+  exchange: string;
+  stock_code: string;
+  name: string;
+  report_count: number;
+}
+
+/** 字数/字符数紧凑显示：13,300,121 → 13.3M。 */
+function fmtCount(n?: number): string {
+  if (!n) return "";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(0) + "K";
+  return String(n);
+}
+
+/** 是否「额度用完/撞限流」类错误（需要引导去领 key）。 */
+function needsKey(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("quota") ||
+    lower.includes("limit") ||
+    lower.includes("429") ||
+    lower.includes("预览") ||
+    lower.includes("31 篇") ||
+    lower.includes("preview") ||
+    lower.includes("免费")
+  );
 }
 
 export default class DataSinkingPlugin extends Plugin {
@@ -56,15 +77,9 @@ export default class DataSinkingPlugin extends Plugin {
     await this.loadSettings();
 
     this.addCommand({
-      id: "fetch-report",
-      name: "Fetch a report by symbol",
-      callback: () => new SymbolModal(this.app, this).open(),
-    });
-
-    this.addCommand({
-      id: "batch-download",
-      name: "Batch download reports (comma-separated symbols)",
-      callback: () => new BatchModal(this.app, this).open(),
+      id: "search-reports",
+      name: "Search financial reports",
+      callback: () => new SearchModal(this.app, this).open(),
     });
 
     this.addSettingTab(new DataSinkingSettingTab(this.app, this));
@@ -94,37 +109,54 @@ export default class DataSinkingPlugin extends Plugin {
     return data;
   }
 
-  /** 拉某 symbol 的「倒数第 k 份」全文 → 存成笔记。返回文件名或 null。 */
-  async saveReport(symbol: string, k: number): Promise<string | null> {
-    const sym = symbol.trim();
-    if (!sym) return null;
+  /** 模糊搜股票（英文名/代码）。/search 是公开端点，不填 key。 */
+  async searchStocks(query: string): Promise<StockItem[]> {
+    const data = await this.api<{ items?: StockItem[] }>(
+      `/search?q=${encodeURIComponent(query)}`,
+      false
+    );
+    return data.items ?? [];
+  }
 
-    let doc: ReportDoc | undefined;
+  /** 列某 symbol 的全部财报（新→旧），只要元数据。 */
+  async listReports(symbol: string): Promise<ReportDoc[]> {
+    const sym = encodeURIComponent(symbol);
     if (this.settings.apiKey) {
-      // 有 key：正式端点，一步拿全文（size=k，取第 k-1 项 = 倒数第 k 份）
       const data = await this.api<{ items?: ReportDoc[] }>(
-        `/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=${k}&with_content=1`,
+        `/documents?symbol=${sym}&order=desc&size=200`,
         true
       );
-      doc = data.items?.[k - 1];
-    } else {
-      // 无 key：公共端点两步（列表 → 按 id 取全文），走 31 篇/7 天/IP 公共额度
-      const list = await this.api<{ items?: ReportDoc[] }>(
-        `/public/documents?symbol=${encodeURIComponent(sym)}&order=desc&size=${k}`,
-        false
-      );
-      const meta = list.items?.[k - 1];
-      if (meta) {
-        doc = await this.api<ReportDoc>(`/public/documents/${meta.id}`, false);
+      return data.items ?? [];
+    }
+    const data = await this.api<{ items?: ReportDoc[] }>(
+      `/public/documents?symbol=${sym}&order=desc&size=200`,
+      false
+    );
+    return data.items ?? [];
+  }
+
+  /** 按 id 取全文。 */
+  async fetchContent(id: number): Promise<ReportDoc> {
+    if (this.settings.apiKey) {
+      return await this.api<ReportDoc>(`/documents/${id}`, true);
+    }
+    return await this.api<ReportDoc>(`/public/documents/${id}`, false);
+  }
+
+  /** 把一份带 content 的文档存成笔记。返回文件名或 null。 */
+  async saveDoc(doc: ReportDoc): Promise<string | null> {
+    const folder = normalizePath(this.settings.outputFolder || "");
+    // 确保输出文件夹存在（vault.create 有的版本不会自动建父目录 → ENOENT）
+    if (folder) {
+      const existing = this.app.vault.getAbstractFileByPath(folder);
+      if (!existing) {
+        try {
+          await this.app.vault.createFolder(folder);
+        } catch {
+          // 已存在/失败都继续，vault.create 会再报
+        }
       }
     }
-
-    if (!doc) {
-      new Notice(`DataSinking: no report #${k} for ${sym}`, 8000);
-      return null;
-    }
-
-    const folder = normalizePath(this.settings.outputFolder || "");
     const filename = `${doc.symbol} - ${doc.report_period}.md`;
     const path = folder ? `${folder}/${filename}` : filename;
 
@@ -135,111 +167,162 @@ export default class DataSinkingPlugin extends Plugin {
     return filename;
   }
 
-  notifyError(e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const lower = msg.toLowerCase();
-    if (lower.includes("quota") || lower.includes("limit") || lower.includes("429")) {
-      new Notice(
-        "DataSinking: free quota used up — get a free API key at datasink.ing and paste it in Settings → DataSinking.",
-        10000
-      );
-    } else if (lower.includes("missing api key")) {
-      new Notice("DataSinking: missing API key — check Settings → DataSinking.", 5000);
-    } else {
-      new Notice(`DataSinking error: ${msg}`, 8000);
-    }
-  }
 }
 
-// ---- 输入单个 symbol + 指定第几份的弹窗 ----
-class SymbolModal extends Modal {
+// ---- 智能搜索：股票列表 → 财报列表 → 点击下载 ----
+class SearchModal extends Modal {
+  private listEl: HTMLElement;
+  private lastQuery = "";
+
   constructor(app: App, private plugin: DataSinkingPlugin) {
     super(app);
   }
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl("h2", { text: "Fetch financial report" });
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Financial reports" });
 
-    contentEl.createEl("p", { text: "Symbol (FMP-style, e.g. 600519.SS / 7203.T / 005930.KS / 2330.TW):" });
-    const input = contentEl.createEl("input", { type: "text" });
-    input.addClass("datasinking-input");
-    input.placeholder = "7203.T";
+    const row = contentEl.createDiv({ cls: "datasinking-search-row" });
+    const input = row.createEl("input", {
+      type: "text",
+      cls: "datasinking-input",
+    });
+    input.placeholder = "Company name or ticker, e.g. Toyota / 7203 / AAPL";
     input.focus();
-
-    contentEl.createEl("p", { text: "Which report (blank or -1 = latest · -2 = 2nd latest · -3 = 3rd latest):" });
-    const idx = contentEl.createEl("input", { type: "text" });
-    idx.addClass("datasinking-index-input");
-    idx.placeholder = "-1 = latest";
-
-    const submit = () => this.submit(input.value, idx.value);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") void submit(); });
-    idx.addEventListener("keydown", (e) => { if (e.key === "Enter") void submit(); });
-
-    new Setting(contentEl)
-      .addButton((btn) => btn.setButtonText("Fetch").setCta().onClick(() => void submit()));
-
-    const foot = contentEl.createEl("p", { cls: "datasinking-modal-link" });
-    foot.createEl("a", { text: "Visit datasink.ing →", href: HOMEPAGE_URL });
-  }
-
-  async submit(symbol: string, rawIdx: string) {
-    this.close();
-    try {
-      await this.plugin.saveReport(symbol, parseIndex(rawIdx));
-    } catch (e) {
-      this.plugin.notifyError(e);
-    }
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
-}
-
-// ---- 批量下载的弹窗 ----
-class BatchModal extends Modal {
-  constructor(app: App, private plugin: DataSinkingPlugin) {
-    super(app);
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl("h2", { text: "Batch download reports" });
-    contentEl.createEl("p", { text: "Comma-separated symbols, one report each (latest):" });
-
-    const input = contentEl.createEl("textarea");
-    input.addClass("datasinking-textarea");
-    input.placeholder = "600519.SS, 7203.T, 005930.KS, 2330.TW";
-
-    const submit = () => this.submit(input.value);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
+    const btn = row.createEl("button", {
+      text: "Search",
+      cls: "datasinking-search-btn",
     });
 
-    new Setting(contentEl)
-      .addButton((btn) => btn.setButtonText("Download").setCta().onClick(() => void submit()));
+    this.listEl = contentEl.createDiv({ cls: "datasinking-list" });
 
-    const foot = contentEl.createEl("p", { cls: "datasinking-modal-link" });
-    foot.createEl("a", { text: "Visit datasink.ing →", href: HOMEPAGE_URL });
+    const doSearch = () => void this.search(input.value);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doSearch();
+    });
+    btn.addEventListener("click", doSearch);
   }
 
-  async submit(raw: string) {
-    this.close();
-    const symbols = raw.split(",").map((s) => s.trim()).filter(Boolean);
-    if (symbols.length === 0) return;
+  async search(query: string) {
+    const q = query.trim();
+    if (!q) return;
+    this.lastQuery = q;
 
-    let ok = 0;
-    for (const s of symbols) {
-      try {
-        const name = await this.plugin.saveReport(s, 1); // 批量拉各自最新
-        if (name) ok++;
-      } catch (e) {
-        this.plugin.notifyError(e);
-        break; // 撞额度/断网就停，别把剩下的也刷一遍
-      }
+    this.listEl.empty();
+    this.listEl.createEl("div", { text: "Loading…", cls: "datasinking-loading" });
+
+    try {
+      const stocks = await this.plugin.searchStocks(q);
+      this.renderStocks(stocks, q);
+    } catch (e) {
+      this.renderError(e);
     }
-    new Notice(`DataSinking: downloaded ${ok}/${symbols.length} reports`);
+  }
+
+  renderStocks(stocks: StockItem[], q: string) {
+    this.listEl.empty();
+    if (stocks.length === 0) {
+      this.listEl.createEl("div", {
+        text: `No stocks found for "${q}".`,
+        cls: "datasinking-empty",
+      });
+      return;
+    }
+
+    for (const s of stocks) {
+      const itemEl = this.listEl.createEl("div", { cls: "datasinking-item" });
+      itemEl.createEl("div", {
+        text: s.name || s.symbol,
+        cls: "datasinking-item-title",
+      });
+      itemEl.createEl("div", {
+        text: `${s.symbol} · ${s.report_count} reports`,
+        cls: "datasinking-item-meta",
+      });
+      itemEl.addEventListener("click", () => void this.showReports(s));
+    }
+  }
+
+  async showReports(stock: StockItem) {
+    this.listEl.empty();
+    this.listEl.createEl("div", {
+      text: `Loading ${stock.name || stock.symbol}…`,
+      cls: "datasinking-loading",
+    });
+
+    try {
+      const items = await this.plugin.listReports(stock.symbol);
+      this.renderReports(stock, items);
+    } catch (e) {
+      this.renderError(e);
+    }
+  }
+
+  renderReports(stock: StockItem, items: ReportDoc[]) {
+    this.listEl.empty();
+
+    // 顶部一个返回链接 + 股票名
+    const back = this.listEl.createEl("div", { cls: "datasinking-back" });
+    back.createEl("span", { text: `← ${stock.name || stock.symbol} (${stock.symbol})` });
+    back.addEventListener("click", () => void this.search(this.lastQuery));
+
+    if (items.length === 0) {
+      this.listEl.createEl("div", {
+        text: `No reports for ${stock.symbol}.`,
+        cls: "datasinking-empty",
+      });
+      return;
+    }
+
+    for (const it of items) {
+      const itemEl = this.listEl.createEl("div", { cls: "datasinking-item" });
+      itemEl.createEl("div", {
+        text: it.title || "(untitled)",
+        cls: "datasinking-item-title",
+      });
+      const metaBits = [
+        it.report_period,
+        it.doc_type,
+        fmtCount(it.word_count) ? `${fmtCount(it.word_count)} chars` : "",
+      ].filter(Boolean);
+      itemEl.createEl("div", {
+        text: metaBits.join(" · "),
+        cls: "datasinking-item-meta",
+      });
+      itemEl.addEventListener("click", () => void this.download(it));
+    }
+  }
+
+  async download(meta: ReportDoc) {
+    try {
+      const doc = await this.plugin.fetchContent(meta.id);
+      await this.plugin.saveDoc(doc);
+    } catch (e) {
+      this.renderError(e);
+    }
+  }
+
+  /** 出错时在列表区就地渲染；额度类错误给「领 key」链接。 */
+  renderError(e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const key = needsKey(msg);
+    this.listEl.empty();
+
+    const box = this.listEl.createDiv({ cls: "datasinking-error" });
+    if (key) {
+      box.createEl("div", { text: "免费额度用完了", cls: "datasinking-error-title" });
+      box.createEl("div", {
+        text: "不填 key 每 7 天只能拉 31 篇。领个免费 key（8191 篇 / 7 天，不用注册）填进「设置 → DataSinking」就能继续。",
+        cls: "datasinking-error-text",
+      });
+      const a = box.createEl("a", { text: "去领免费 key →", href: FREE_KEY_URL });
+      a.setAttr("target", "_blank");
+      a.setAttr("rel", "noopener");
+    } else {
+      box.createEl("div", { text: "出错了", cls: "datasinking-error-title" });
+      box.createEl("div", { text: msg, cls: "datasinking-error-text" });
+    }
   }
 
   onClose() {
