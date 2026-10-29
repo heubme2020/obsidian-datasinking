@@ -118,21 +118,30 @@ export default class DataSinkingPlugin extends Plugin {
     return data.items ?? [];
   }
 
-  /** 列某 symbol 的全部财报（新→旧），只要元数据。 */
+  /** 列某 symbol 的全部财报（新→旧），只要元数据。公共端点单页上限 100、keyed 200，超过翻页。 */
   async listReports(symbol: string): Promise<ReportDoc[]> {
     const sym = encodeURIComponent(symbol);
-    if (this.settings.apiKey) {
-      const data = await this.api<{ items?: ReportDoc[] }>(
-        `/documents?symbol=${sym}&order=desc&size=200`,
-        true
-      );
-      return data.items ?? [];
+    const size = this.settings.apiKey ? 200 : 100;
+    let all: ReportDoc[] = [];
+    let page = 1;
+    for (;;) {
+      const data = this.settings.apiKey
+        ? await this.api<{ items?: ReportDoc[]; total?: number }>(
+            `/documents?symbol=${sym}&order=desc&size=${size}&page=${page}`,
+            true
+          )
+        : await this.api<{ items?: ReportDoc[]; total?: number }>(
+            `/public/documents?symbol=${sym}&order=desc&size=${size}&page=${page}`,
+            false
+          );
+      const items = data.items ?? [];
+      all = all.concat(items);
+      if (!items.length || all.length >= (data.total ?? 0)) break;
+      page++;
+      // 公共端点 1 请求/3 秒限流，翻页间 sleep 避免撞限流
+      if (!this.settings.apiKey) await new Promise((r) => setTimeout(r, 3200));
     }
-    const data = await this.api<{ items?: ReportDoc[] }>(
-      `/public/documents?symbol=${sym}&order=desc&size=200`,
-      false
-    );
-    return data.items ?? [];
+    return all;
   }
 
   /** 按 id 取全文。 */
