@@ -166,7 +166,9 @@ export default class DataSinkingPlugin extends Plugin {
         }
       }
     }
-    const filename = `${doc.symbol} - ${doc.report_period}.md`;
+    // 招股书等非定期报告 report_period 为 null → 用 doc_type 兜底，别拼出 "xxx - null.md"
+    const period = doc.report_period || doc.doc_type || "report";
+    const filename = `${doc.symbol} - ${period}.md`;
     const path = folder ? `${folder}/${filename}` : filename;
 
     const content = doc.content || `# ${doc.title}\n\n(no content returned)`;
