@@ -2,7 +2,7 @@
 
 Pull **full-text financial reports** (annual, semi-annual, quarterly, 10-K) into your vault as clean Markdown notes — headings, tables and unit notes preserved, ready for reading and linking.
 
-Coverage: US (SEC EDGAR), UK, China (A-shares), Japan, Korea, Taiwan.
+Coverage: US (SEC EDGAR), China (A-shares), Europe (ESEF), Japan (EDINET), Korea (DART), Taiwan (MOPS).
 
 ## Features
 
