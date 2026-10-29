@@ -1,5 +1,74 @@
 /* DataSinking Obsidian plugin styles */
 .datasinking-input { width: 100%; }
-.datasinking-index-input { width: 100%; margin-bottom: 12px; }
-.datasinking-textarea { width: 100%; height: 80px; margin-bottom: 12px; }
-.datasinking-modal-link { margin-top: 8px; }
+
+.datasinking-search-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.datasinking-search-row .datasinking-input { flex: 1; }
+
+.datasinking-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.datasinking-loading,
+.datasinking-empty {
+  padding: 16px 0;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.datasinking-item {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.datasinking-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.datasinking-item-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.datasinking-item-meta {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.datasinking-back {
+  padding: 6px 2px;
+  color: var(--text-accent);
+  cursor: pointer;
+  font-size: 0.9em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 4px;
+}
+.datasinking-back:hover {
+  text-decoration: underline;
+}
+
+.datasinking-error {
+  padding: 20px 8px;
+  text-align: center;
+}
+.datasinking-error-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.datasinking-error-text {
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.datasinking-error a {
+  color: var(--text-accent);
+}
