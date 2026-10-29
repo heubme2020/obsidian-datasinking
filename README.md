@@ -6,9 +6,9 @@ Coverage: US (SEC EDGAR), UK, China (A-shares), Japan, Korea, Taiwan.
 
 ## Features
 
-- **Search a symbol → list all its reports → click to download** — type a FMP-style ticker (`7203.T`, `600519.SS`, `005930.KS`, `2330.TW`), see the full list of that stock's financial reports (annual, semi-annual, quarterly), and click any one to save it into your vault as a Markdown note.
-- **Free tier** — no key needed to try it; the shared free quota is small.
-- **Your own key** — grab a free API key at [datasink.ing](https://datasink.ing) (no signup required) and paste it in Settings → DataSinking to unlock 8,191 docs / 7 days.
+- **Smart search** — type a company name (`Toyota`, `Apple`, `Microsoft`) or a ticker (`7203.T`, `AAPL`, `600519.SS`, `005930.KS`, `2330.TW`). It finds the matching stocks, lists all their financial reports (annual, semi-annual, quarterly), and clicking any one saves it into your vault as a Markdown note.
+- **Free tier** — no key needed to try it: 31 reports / 7 days / IP.
+- **Your own key** — grab a free API key at [datasink.ing](https://datasink.ing) (no signup required) and paste it in Settings → DataSinking to unlock 8,191 reports / 7 days.
 
 ## Install
 
