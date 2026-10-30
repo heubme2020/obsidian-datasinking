@@ -139,7 +139,7 @@ export default class DataSinkingPlugin extends Plugin {
       if (!items.length || all.length >= (data.total ?? 0)) break;
       page++;
       // 公共端点 1 请求/3 秒限流，翻页间 sleep 避免撞限流
-      if (!this.settings.apiKey) await new Promise((r) => setTimeout(r, 3200));
+      if (!this.settings.apiKey) await new Promise((r) => window.setTimeout(r, 3200));
     }
     return all;
   }
@@ -160,7 +160,8 @@ export default class DataSinkingPlugin extends Plugin {
       const existing = this.app.vault.getAbstractFileByPath(folder);
       if (!existing) {
         try {
-          await this.app.vault.createFolder(folder);
+          // createFolder 是 1.0.0 之后才有的 API，用老的 adapter.mkdir 过 minAppVersion 检查
+          await this.app.vault.adapter.mkdir(folder);
         } catch {
           // 已存在/失败都继续，vault.create 会再报
         }
